@@ -12,7 +12,7 @@ from pyrogram.errors import FloodWait
 import sys
 import ffmpeg
 import re
-change_settings({"IMAGEMAGICK_BINARY": r"C:/Program Files/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
+change_settings({"IMAGEMAGICK_BINARY": r"/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
 
 with open('config.json') as config_file:
     config = json.load(config_file)
@@ -397,8 +397,8 @@ async def handle_text_message(client, message: Message):
     state = user_states.get(chat_id, 'awaiting_video_link')
 
     if state == 'awaiting_video_link':
-        directory = 'c:/Users/Administrator/Desktop/Riri-Sub/downloads/'
-        directory2 = 'c:/Users/Administrator/Desktop/Riri-Sub'
+        directory = '/downloads'
+        directory2 = './'
         extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
         for filename in os.listdir(directory):
             if any(filename.endswith(ext) for ext in extensions_to_delete):
@@ -451,8 +451,8 @@ async def handle_video_file(client, message: Message):
     state = user_states.get(chat_id, 'awaiting_video_link')
 
     if state == 'awaiting_video_link':
-        directory = 'c:/Users/Administrator/Desktop/Riri-Sub/downloads/'
-        directory2 = 'c:/Users/Administrator/Desktop/Riri-Sub'
+        directory = 'downloads/'
+        directory2 = './'
         extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
         for filename in os.listdir(directory):
             if any(filename.endswith(ext) for ext in extensions_to_delete):
