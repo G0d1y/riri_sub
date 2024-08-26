@@ -397,7 +397,7 @@ async def handle_text_message(client, message: Message):
     state = user_states.get(chat_id, 'awaiting_video_link')
 
     if state == 'awaiting_video_link':
-        directory = '/downloads'
+        directory = 'downloads/'
         directory2 = './'
         extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
         for filename in os.listdir(directory):
