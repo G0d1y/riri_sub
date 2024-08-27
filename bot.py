@@ -13,6 +13,7 @@ import sys
 import ffmpeg
 import re
 import tqdm
+import uvloop
 
 change_settings({"IMAGEMAGICK_BINARY": r"/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
 
