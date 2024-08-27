@@ -12,7 +12,6 @@ uvloop.install()
 with open('config.json') as config_file:
     config = json.load(config_file)
 
-# Replace with your own API_ID, API_HASH, and BOT_TOKEN
 api_id = int(config['api_id'])
 api_hash = config['api_hash']
 bot_token = config['bot_token']
@@ -40,11 +39,13 @@ async def download_file(message):
         async def progress(current, total):
             pbar.update(current - pbar.n)
         
-        # Start downloading with the progress callback
-        await message.download(file_name=dest_path, progress=progress)
-        print(f"Downloaded to {dest_path}")
+        try:
+            # Start downloading with the progress callback
+            await message.download(file_name=dest_path, progress=progress)
+            print(f"Downloaded to {dest_path}")
+        except Exception as e:
+            print(f"Error downloading file: {e}")
 
-        
 async def upload_file(file_name):
     file_path = os.path.join("./downloads", file_name)
     
@@ -61,14 +62,16 @@ async def upload_file(file_name):
             pbar.update(current - pbar.n)
         
         # Upload the file (for example, to a specific chat or user)
-        # Replace 'YOUR_CHAT_ID' with the appropriate chat ID
         chat_id = 6459990242
-        await app.send_document(
-            chat_id,
-            file_path,
-            progress=progress
-        )
-        print(f"Uploaded to chat {chat_id}")
+        try:
+            await app.send_document(
+                chat_id,
+                file_path,
+                progress=progress
+            )
+            print(f"Uploaded to chat {chat_id}")
+        except Exception as e:
+            print(f"Error uploading file: {e}")
 
 if __name__ == "__main__":
     app.run()
