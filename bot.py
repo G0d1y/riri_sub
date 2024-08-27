@@ -13,6 +13,8 @@ import sys
 import ffmpeg
 import re
 import tqdm
+import uvloop
+
 change_settings({"IMAGEMAGICK_BINARY": r"/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
 
 with open('config.json') as config_file:
@@ -22,6 +24,7 @@ api_id = int(config['api_id'])
 api_hash = config['api_hash']
 bot_token = config['bot_token']
 
+uvloop.install()
 app = Client(
     "bot",
     api_id=api_id,
