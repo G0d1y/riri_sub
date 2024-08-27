@@ -462,18 +462,15 @@ async def handle_video_file(client, message: Message):
         directory = './downloads'
         directory2 = './'
         extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
-        for filename in os.listdir(directory):
-            if any(filename.endswith(ext) for ext in extensions_to_delete):
-                file_path = os.path.join(directory, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-
-        for filename in os.listdir(directory2):
-            if any(filename.endswith(ext) for ext in extensions_to_delete):
-                file_path = os.path.join(directory2, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                    
+        
+        # Remove old files
+        for directory_path in [directory, directory2]:
+            for filename in os.listdir(directory_path):
+                if any(filename.endswith(ext) for ext in extensions_to_delete):
+                    file_path = os.path.join(directory_path, filename)
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+        
         # Save the video file
         file_id = message.document.file_id
         file_name = message.document.file_name
@@ -483,18 +480,19 @@ async def handle_video_file(client, message: Message):
         await message.reply("Please send the name you want for the video file.")
         user_states[chat_id] = 'awaiting_video_name_file'
         
-    elif state != "awaiting_video_link":
+    elif state == 'awaiting_video_name_file':
         try:
             subtitle_file_path = 'subtitle.srt'
-
+            
+            # Remove old subtitle file
             if os.path.exists(subtitle_file_path):
                 os.remove(subtitle_file_path)
-
+            
             downloaded_file_path = await message.download()
             os.rename(downloaded_file_path, subtitle_file_path)
-
+            
             user_subtitle_paths[chat_id] = subtitle_file_path
-            video_path = user_video_paths.get(chat_id).get('path')
+            video_path = user_video_paths.get(chat_id, {}).get('path')
 
             if not video_path:
                 await message.reply("Video path not found.")
@@ -636,41 +634,60 @@ async def handle_watermark(client: Client, callback_query: CallbackQuery):
 async def upload_video_with_progress(client, chat_id, video_path, uploading_text):
     start_time = time.time()
     total_size = os.path.getsize(video_path)
-    last_update_time = start_time
 
-    try:
-        with open(video_path, 'rb') as video_file:
-            response = await client.send_video(
-                chat_id=chat_id,
-                video=video_file,
-                thumb="cover.jpg"
-            )
+    # Create a progress bar with tqdm
+    with open(video_path, 'rb') as video_file, tqdm(
+        desc="Uploading",
+        total=total_size,
+        unit='B',
+        unit_scale=True,
+        unit_divisor=1024
+    ) as bar:
+        try:
+            # Read and send video file in chunks
+            async for chunk in iter(lambda: video_file.read(8192), b''):
+                bar.update(len(chunk))
+                # Since pyrogram doesn't support streaming uploads, we'll just show the progress.
+                await client.send_video(
+                    chat_id=chat_id,
+                    video=chunk,
+                    thumb="cover.jpg"
+                )
 
-        elapsed_time = time.time() - start_time
-        status_message = f"Uploading video completed in {elapsed_time:.2f} seconds."
-
-        await client.edit_message_text(chat_id, uploading_text.id, status_message)
-
-    except Exception as e:
-        await client.send_message(chat_id, f"Failed to upload video: {str(e)}")
+            elapsed_time = time.time() - start_time
+            status_message = f"Uploading video completed in {elapsed_time:.2f} seconds."
+            await client.edit_message_text(chat_id, uploading_text.id, status_message)
+        except Exception as e:
+            await client.send_message(chat_id, f"Failed to upload video: {str(e)}")
 
 async def upload_document_with_progress(client, chat_id, document_path, uploading_text):
-    start_time = time.time()
     total_size = os.path.getsize(document_path)
-    try:
-        with open(document_path, 'rb') as doc_file:
-            response = await client.send_document(
-                chat_id=chat_id,
-                document=doc_file,
-                thumb="cover.jpg"
-            )
-        
-        elapsed_time = time.time() - start_time
-        status_message = f"Uploading document completed in {elapsed_time:.2f} seconds."
+    start_time = time.time()
+    
+    # Create a tqdm progress bar
+    with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, desc="Uploading") as progress_bar:
+        try:
+            # Open the file and upload in chunks
+            def read_in_chunks(file, chunk_size=8192):
+                while True:
+                    data = file.read(chunk_size)
+                    if not data:
+                        break
+                    yield data
 
-        await client.edit_message_text(chat_id, uploading_text.id, status_message)
+            with open(document_path, 'rb') as doc_file:
+                # Use a chunked upload to track progress
+                response = await client.send_document(
+                    chat_id=chat_id,
+                    document=doc_file,
+                    thumb="cover.jpg",
+                    progress=progress_bar.update
+                )
+            
+            elapsed_time = time.time() - start_time
+            status_message = f"Uploading document completed in {elapsed_time:.2f} seconds."
+            await client.edit_message_text(chat_id, uploading_text.id, status_message)
 
-    except Exception as e:
-        await client.send_message(chat_id, f"Failed to upload document: {str(e)}")
-
+        except Exception as e:
+            await client.send_message(chat_id, f"Failed to upload document: {str(e)}")
 app.run()
