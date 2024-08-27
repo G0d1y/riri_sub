@@ -3,6 +3,7 @@ from pyrogram import Client
 import json
 import os
 from tqdm import tqdm
+import uvloop
 
 # Load the config file
 with open('config.json') as config_file:
@@ -12,6 +13,7 @@ with open('config.json') as config_file:
 api_id = int(config['api_id'])
 api_hash = config['api_hash']
 bot_token = config['bot_token']
+uvloop.install()
 
 app = Client("my_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
@@ -57,7 +59,7 @@ async def upload_file(file_name):
         
         # Upload the file (for example, to a specific chat or user)
         # Replace 'YOUR_CHAT_ID' with the appropriate chat ID
-        chat_id = 'YOUR_CHAT_ID'
+        chat_id = 6459990242
         await app.send_document(
             chat_id,
             file_path,
