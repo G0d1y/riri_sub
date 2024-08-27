@@ -12,6 +12,7 @@ from pyrogram.errors import FloodWait
 import sys
 import ffmpeg
 import re
+import tqdm
 change_settings({"IMAGEMAGICK_BINARY": r"/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
 
 with open('config.json') as config_file:
@@ -82,36 +83,43 @@ def get_file_extension(url):
     _, ext = os.path.splitext(path)
     return ext if ext else '.mp4'  
 
-async def download_video(client, url, file_name, chat_id , downloading_text):
+async def download_video(client, url, file_name, chat_id, downloading_text):
     file_extension = get_file_extension(url)
     video_path = f"downloaded_{file_name}{file_extension}"
-    start_time = time.time()  
+    start_time = time.time()
     last_update_time = start_time
-    update_interval = 1  
+    update_interval = 1  # seconds
+
     try:
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
-        
-        downloaded_size = 0
-        with open(video_path, 'wb') as file:
+
+        # Use tqdm to create a progress bar
+        with open(video_path, 'wb') as file, tqdm(
+            desc="Downloading",
+            total=total_size,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024
+        ) as bar:
             for chunk in response.iter_content(chunk_size=8192):
                 file.write(chunk)
-                downloaded_size += len(chunk)
-                
+                bar.update(len(chunk))
+
                 current_time = time.time()
                 if current_time - last_update_time >= update_interval:
                     elapsed_time = current_time - start_time
-                    percentage = (downloaded_size / total_size) * 100
-                    speed = downloaded_size / elapsed_time
+                    percentage = (bar.n / total_size) * 100
+                    speed = bar.n / elapsed_time
                     speed_kb_s = speed / 1024
                     speed_mb_s = speed / (1024 * 1024)
-                    status_message = f"Downloading {downloaded_size / 1024 / 1024:.2f}MB ({percentage:.1f}%) of {total_size / 1024 / 1024:.2f}MB\n"
+                    status_message = f"Downloading {bar.n / (1024 * 1024):.2f}MB ({percentage:.1f}%) of {total_size / (1024 * 1024):.2f}MB\nSpeed: {speed_kb_s:.2f} KB/s"
 
                     try:
-                        await client.edit_message_text(chat_id, downloading_text.id , status_message)
+                        await client.edit_message_text(chat_id, downloading_text.id, status_message)
                     except FloodWait as e:
-                        await asyncio.sleep(e.x) 
-                    
+                        await asyncio.sleep(e.x)
+
                     last_update_time = current_time
 
         return video_path
