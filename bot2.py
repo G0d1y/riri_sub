@@ -1,9 +1,12 @@
 import asyncio
+import uvloop
 from pyrogram import Client
 import json
 import os
 from tqdm import tqdm
-import uvloop
+
+# Install uvloop before creating the Client instance
+uvloop.install()
 
 # Load the config file
 with open('config.json') as config_file:
@@ -13,7 +16,6 @@ with open('config.json') as config_file:
 api_id = int(config['api_id'])
 api_hash = config['api_hash']
 bot_token = config['bot_token']
-uvloop.install()
 
 app = Client("my_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
