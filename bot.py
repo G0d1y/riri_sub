@@ -3,14 +3,13 @@ import requests
 import json
 from urllib.parse import urlparse, parse_qs, unquote
 from pyrogram import Client, filters
-from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
+from pyrogram.types import Message
 from moviepy.config import change_settings
 import subprocess
 import time
 import asyncio
 from pyrogram.errors import FloodWait
 import sys
-import ffmpeg
 import re
 import tqdm
 import uvloop
@@ -94,8 +93,7 @@ async def download_video(client, url, file_name, chat_id, downloading_text):
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
 
-        # Use tqdm to create a progress bar
-        with open(video_path, 'wb') as file, tqdm(
+        with open(video_path, 'wb') as file, tqdm.tqdm(
             desc="Downloading",
             total=total_size,
             unit='B',
@@ -261,7 +259,7 @@ def add_cover_as_first_frame(video_path, cover_image_path, output_path, cover_du
         '-c:v', 'libx264',
         '-t', str(cover_duration),
         '-pix_fmt', 'yuv420p',
-        '-vf', 'fps={}'.format(frame_rate),
+        '-vf', f'fps={frame_rate}',
         '-an',
         '-y',
         'cover_temp.mp4'
@@ -307,10 +305,10 @@ async def upload_video_with_progress(client, chat_id, video_path, uploading_text
         unit_divisor=1024
     ) as progress_bar:
         try:
-            async for chunk in read_in_chunks(video_file):
+            # Pyrogram doesn't support chunked uploads directly, so this part is simulated
+            await client.send_video(chat_id, video_path, thumb="cover.jpg")
+            for chunk in read_in_chunks(video_file):
                 progress_bar.update(len(chunk))
-                # Pyrogram doesn't support chunked uploads directly, so this part is simulated
-                await client.send_video(chat_id, video_path, thumb="cover.jpg")
             elapsed_time = time.time() - start_time
             status_message = f"Uploading video completed in {elapsed_time:.2f} seconds."
             await client.edit_message_text(chat_id, uploading_text.id, status_message)
