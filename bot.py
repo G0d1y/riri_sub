@@ -156,16 +156,37 @@ async def run_ffmpeg_command(client, chat_id, command, status_message):
         error_message = f"Error during FFmpeg command: {str(e)}\nFFmpeg stderr: {e.stderr}"
         print(error_message)
         await client.send_message(chat_id, error_message)
-        
-async def add_watermark(client, chat_id, video_path, output_path, watermark_duration=20):
+
+def get_video_properties(video_path):
+    cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,r_frame_rate',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        video_path
+    ]
+    output = subprocess.check_output(cmd, text=True).splitlines()
+    width, height = output[0], output[1]
+    frame_rate = eval(output[2])  # Converts frame rate from a string like "30000/1001" to a float
+    return width, height, frame_rate
+     
+async def add_watermark(client, chat_id, video_path, output_path, watermark_duration=20, audio_delay_correction=0.0):
     watermark_text = "بزرگترین کانال دانلود سریال کره ای\n@RiRiKdrama |  ریری کیدراما"
     font_path = 'Sahel-Bold.ttf'
-        
     watermarked_segment_path = 'watermarked_segment.mkv'
+    remaining_part_path = 'remaining_part.mkv'
+    reencoded_watermarked_path = 'watermarked_segment_reencoded.mkv'
+    concat_file_path = 'concat_list.txt'
+
+    # Get video properties
+    width, height, frame_rate = get_video_properties(video_path)
+
+    # Step 1: Add Watermark
     watermark_cmd = [
         'ffmpeg',
         '-i', video_path,
-                '-vf', (
+        '-vf', (
             f"drawtext="
             f"text='{watermark_text}':"
             f"fontfile={font_path}:"
@@ -178,9 +199,10 @@ async def add_watermark(client, chat_id, video_path, output_path, watermark_dura
             f"line_spacing=10"
         ),
         '-t', str(watermark_duration),
+        '-copyts', '-start_at_zero',
         '-c:v', 'libx264',
         '-crf', '18',
-        '-preset', 'veryfast',
+        '-preset', 'ultrafast',
         '-c:a', 'copy',
         '-vsync', '0',
         '-y',
@@ -188,23 +210,40 @@ async def add_watermark(client, chat_id, video_path, output_path, watermark_dura
     ]
     await run_ffmpeg_command(client, chat_id, watermark_cmd, "Adding watermark...")
 
-    remaining_part_path = 'remaining_part.mkv'
+    # Step 2: Re-encode Watermarked Segment to Match the Main Video
+    reencode_cmd = [
+        'ffmpeg',
+        '-i', watermarked_segment_path,
+        '-filter_complex', (
+            f"pad={width}:{height}:-1:-1,fps={frame_rate}[v];"
+            f"aresample=async=1:min_hard_comp=0.1:first_pts=0[a]"
+        ),
+        '-map', '[v]', '-map', '[a]',
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-copyts', '-start_at_zero',
+        '-y',
+        reencoded_watermarked_path
+    ]
+    await run_ffmpeg_command(client, chat_id, reencode_cmd, "Re-encoding watermarked segment...")
+
+    # Step 3: Extract the Remaining Part of the Video
     extract_cmd = [
         'ffmpeg',
         '-i', video_path,
         '-ss', str(watermark_duration),
         '-c:v', 'copy',
         '-c:a', 'copy',
-        '-fflags', '+genpts',
+        '-copyts', '-start_at_zero',
         '-vsync', '0',
         '-y',
         remaining_part_path
     ]
     await run_ffmpeg_command(client, chat_id, extract_cmd, "Extracting remaining part...")
 
-    concat_file_path = 'concat_list.txt'
+    # Step 4: Concatenate the Segments Using concat Demuxer
     with open(concat_file_path, 'w') as f:
-        f.write(f"file '{watermarked_segment_path}'\n")
+        f.write(f"file '{reencoded_watermarked_path}'\n")
         f.write(f"file '{remaining_part_path}'\n")
 
     concat_cmd = [
@@ -220,9 +259,14 @@ async def add_watermark(client, chat_id, video_path, output_path, watermark_dura
     ]
     await run_ffmpeg_command(client, chat_id, concat_cmd, "Finalizing video...")
 
+    # Step 5: Clean Up Temporary Files
+    for file_path in [watermarked_segment_path, remaining_part_path, reencoded_watermarked_path, concat_file_path]:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
     await client.send_message(chat_id, "Watermarking complete.")
     return output_path
-
+    
 async def add_subtitles(client, chat_id, video_path, subtitles_path, output_path):
     ffmpeg_command = [
         'ffmpeg',
@@ -329,14 +373,19 @@ async def add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_i
         print("Video or subtitles file does not exist.")
         return None
 
-    watermarked_video_path = f"watermarked_{user_name}.mkv"
+    # Paths for intermediate and final files
+    watermarked_video_path = f"watermarked_{user_name}.mp4"
+    subtitle_movtext_path = f"{user_name}_subtitles.mp4"
+    output_path_manually = f"Subbed_{user_name}.mp4"
+    final_output_path = f"{user_name}.mp4"
+
+    # Add watermark to the video
     watermarked_video_path = await add_watermark(client, chat_id, video_path, watermarked_video_path)
     if not watermarked_video_path:
         print("Failed to add watermark.")
         return None
 
-    # Convert SRT to MOV_TEXT format
-    subtitle_movtext_path = f"{user_name}_subtitles.mp4"
+    # Convert subtitles to MOV_TEXT format
     ffmpeg_convert_subtitles_command = [
         'ffmpeg',
         '-i', subtitle_path,
@@ -344,15 +393,12 @@ async def add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_i
         subtitle_movtext_path
     ]
     try:
-        
         subprocess.run(ffmpeg_convert_subtitles_command, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error during subtitle conversion: {str(e)}")
         return None
 
-    output_path_manually = f"Subbed_{user_name}.mp4"
-    output_path = f"{user_name}.mp4"
-    # Embed the converted subtitles into the video
+    # Embed the converted subtitles into the watermarked video
     ffmpeg_command = [
         'ffmpeg',
         '-i', watermarked_video_path,
@@ -364,12 +410,11 @@ async def add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_i
         '-c:a', 'copy',
         '-c:s', 'mov_text',
         '-metadata:s:s:0', 'title=@RiRiMovies',
-        output_path
+        final_output_path
     ]
-
     await run_ffmpeg_command(client, chat_id, ffmpeg_command, "Adding SoftSub...")
-    
-    return output_path
+
+    return final_output_path
 
 @app.on_message(filters.command("start"))
 async def send_welcome(client, message: Message):
@@ -379,6 +424,70 @@ async def send_welcome(client, message: Message):
     await message.reply("Send me a link to a video", reply_markup=keyboard)
     user_states[message.chat.id] = 'awaiting_video_link'
 
+@app.on_message(filters.regex("fh"))
+async def handle_hard_sub(client, message: Message):
+    chat_id = message.from_user.id
+    if chat_id not in user_video_paths:
+        await message.reply("Please send a video link first.")
+        return
+
+    try:
+        video_path = user_video_paths[chat_id].get('path')
+        subtitle_path = user_subtitle_paths.get(chat_id)
+        cover_image_path = 'cover.jpg'
+        video_name = user_video_paths[chat_id].get('name')
+
+        if not video_path or not subtitle_path or not video_name:
+            await message.reply("Video, subtitle file, or video name not found.")
+            return
+
+        await message.reply("Adding hard subtitles, watermark, and cover image to the video...")
+        output_video_path = await process_video(client, chat_id, video_path, subtitle_path, cover_image_path, video_name)
+
+        if output_video_path:
+            uploading_text = await message.reply("Uploading video with hard subtitles, watermark, and cover image...")
+            try:
+                await upload_video_with_progress(client , chat_id, output_video_path, uploading_text)
+                user_states[chat_id] = 'awaiting_video_link'
+            except Exception as e:
+                await message.reply(f"Error uploading video: {str(e)}")
+        else:
+            await message.reply("Failed to create video with hard subtitles, watermark, and cover image.")
+    except Exception as e:
+        await message.reply(f"Error handling subtitle: {str(e)}")
+
+@app.on_message(filters.regex("fs"))
+async def handle_soft_subtitles(client: Client,  message: Message):
+    chat_id = message.from_user.id
+    if chat_id not in user_video_paths:
+        await message.reply("Please send a video link first.")
+        return
+
+    try:
+        video_path = user_video_paths[chat_id].get('path')
+        subtitle_path = user_subtitle_paths.get(chat_id)
+        cover_image_path = 'cover.jpg'
+        user_name = user_video_paths[chat_id].get('name')
+
+        if not video_path or not subtitle_path or not user_name:
+            await message.reply("Video, subtitle file, or user name not found.")
+            return
+
+        await message.reply("Adding soft subtitles, watermark, and cover image to the video...")
+        output_video_path = await add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_image_path, user_name)
+
+        if output_video_path:
+            uploading_text = await message.reply("Uploading video with soft subtitles, watermark, and cover image...")
+            try:
+                await upload_document_with_progress(client, chat_id, output_video_path, uploading_text)
+                user_states[chat_id] = 'awaiting_video_link'
+            except Exception as e:
+                await message.reply(f"Error uploading video: {str(e)}")
+        else:
+            await message.reply("Failed to create video with soft subtitles, watermark, and cover image.")
+    except Exception as e:
+        await message.reply(f"Error handling subtitles: {str(e)}")
+
 @app.on_message(filters.text & filters.private)
 async def handle_text_message(client, message: Message):
     chat_id = message.chat.id
@@ -387,7 +496,7 @@ async def handle_text_message(client, message: Message):
     if state == 'awaiting_video_link':
         directory = './downloads'
         directory2 = './'
-        extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
+        extensions_to_delete = ['.srt', '.mkv', '.mp4']
         for filename in os.listdir(directory):
             if any(filename.endswith(ext) for ext in extensions_to_delete):
                 file_path = os.path.join(directory, filename)
@@ -404,7 +513,7 @@ async def handle_text_message(client, message: Message):
         if video_url.startswith('http'):  # Assuming URL starts with 'http'
             # Handle URL case
             user_video_paths[chat_id] = {'url': video_url}
-            await message.reply("Please send the name you want for the video file.")
+            await message.reply("لطفا نام مورد نظر را بفرستید.")
             user_states[chat_id] = 'awaiting_video_name'
         else:
             await message.reply("Please send a valid URL.")
@@ -419,8 +528,8 @@ async def handle_text_message(client, message: Message):
             video_path = await download_video(client, video_url, video_name, chat_id, downloading_text)
             if video_path:
                 user_video_paths[chat_id]['path'] = video_path
-                await message.reply("Please send the cover image in JPG format.")
-                user_states[chat_id] = 'awaiting_cover_image'
+                await message.reply("فایل زیرنویس رو بفرست")
+                user_states[chat_id] = 'awaiting_subtitle_file'
             else:
                 await message.reply("Failed to download video.")
         except Exception as e:
@@ -430,8 +539,12 @@ async def handle_text_message(client, message: Message):
         user_video_paths[chat_id]['name'] = video_name
         video_path = user_video_paths[chat_id]['path']
 
-        await message.reply("Please send the cover image in JPG format.")
-        user_states[chat_id] = 'awaiting_cover_image'
+        await message.reply("فایل زیرنویس رو بفرست")
+        user_states[chat_id] = 'awaiting_subtitle_file'
+
+def sanitize_filename(filename):
+    # Replace any invalid characters with an underscore
+    return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', filename)
 
 @app.on_message(filters.document & filters.private)
 async def handle_video_file(client, message: Message):
@@ -441,7 +554,7 @@ async def handle_video_file(client, message: Message):
     if state == 'awaiting_video_link':
         directory = './downloads'
         directory2 = './'
-        extensions_to_delete = ['.srt', '.mkv', '.mp4', '.jpg']
+        extensions_to_delete = ['.srt', '.mkv', '.mp4']
         for filename in os.listdir(directory):
             if any(filename.endswith(ext) for ext in extensions_to_delete):
                 file_path = os.path.join(directory, filename)
@@ -453,16 +566,18 @@ async def handle_video_file(client, message: Message):
                 file_path = os.path.join(directory2, filename)
                 if os.path.isfile(file_path):
                     os.remove(file_path)
-                    
+
         # Save the video file
         file_id = message.document.file_id
         file_name = message.document.file_name
+        sanitized_file_name = sanitize_filename(file_name)
+
         await message.reply("Downloading video...")
-        file_path = await message.download()
-        user_video_paths[chat_id] = {'path': file_path, 'name': file_name}
+        file_path = await message.download(file_name=sanitized_file_name)
+        user_video_paths[chat_id] = {'path': file_path, 'name': sanitized_file_name}
         await message.reply("Please send the name you want for the video file.")
         user_states[chat_id] = 'awaiting_video_name_file'
-        
+
     elif state != "awaiting_video_link":
         try:
             subtitle_file_path = 'subtitle.srt'
@@ -481,8 +596,6 @@ async def handle_video_file(client, message: Message):
                 return
 
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("HardSub", callback_data="hard_sub")],
-                [InlineKeyboardButton("SoftSub", callback_data="soft_sub")],
                 [InlineKeyboardButton("Done", callback_data="done")]
             ])
             await message.reply("Choose subtitle mode or press Done to start over:", reply_markup=keyboard)
@@ -492,10 +605,6 @@ async def handle_video_file(client, message: Message):
 @app.on_message(filters.photo & filters.private)
 async def handle_cover(client, message: Message):
     chat_id = message.chat.id
-    if chat_id not in user_video_paths or user_states.get(chat_id) != 'awaiting_cover_image':
-        await message.reply("Please send a video link first.")
-        return
-
     try:
         cover_image_path = 'cover.jpg'
         
@@ -505,77 +614,9 @@ async def handle_cover(client, message: Message):
         downloaded_file_path = await message.download()
         os.rename(downloaded_file_path, cover_image_path)
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Watermark", callback_data="watermark")],
-        ])
-        await message.reply("Cover image received. Now, please send the subtitle file in SRT format.", reply_markup=keyboard)
-        user_states[chat_id] = 'awaiting_subtitle_file'
+        await message.reply("Cover image received")
     except Exception as e:
         await message.reply(f"Error handling cover image: {str(e)}")
-
-@app.on_callback_query(filters.regex("hard_sub"))
-async def handle_hard_sub(client, callback_query: CallbackQuery):
-    chat_id = callback_query.from_user.id
-    if chat_id not in user_video_paths:
-        await callback_query.message.reply("Please send a video link first.")
-        return
-
-    try:
-        video_path = user_video_paths[chat_id].get('path')
-        subtitle_path = user_subtitle_paths.get(chat_id)
-        cover_image_path = 'cover.jpg'
-        video_name = user_video_paths[chat_id].get('name')
-
-        if not video_path or not subtitle_path or not video_name:
-            await callback_query.message.reply("Video, subtitle file, or video name not found.")
-            return
-
-        await callback_query.message.reply("Adding hard subtitles, watermark, and cover image to the video...")
-        output_video_path = await process_video(client, chat_id, video_path, subtitle_path, cover_image_path, video_name)
-
-        if output_video_path:
-            uploading_text = await callback_query.message.reply("Uploading video with hard subtitles, watermark, and cover image...")
-            try:
-                await upload_video_with_progress(client , chat_id, output_video_path, uploading_text)
-                user_states[chat_id] = 'awaiting_video_link'
-            except Exception as e:
-                await callback_query.message.reply(f"Error uploading video: {str(e)}")
-        else:
-            await callback_query.message.reply("Failed to create video with hard subtitles, watermark, and cover image.")
-    except Exception as e:
-        await callback_query.message.reply(f"Error handling subtitle: {str(e)}")
-
-@app.on_callback_query(filters.regex("soft_sub"))
-async def handle_soft_subtitles(client: Client, callback_query: CallbackQuery):
-    chat_id = callback_query.from_user.id
-    if chat_id not in user_video_paths:
-        await callback_query.message.reply("Please send a video link first.")
-        return
-
-    try:
-        video_path = user_video_paths[chat_id].get('path')
-        subtitle_path = user_subtitle_paths.get(chat_id)
-        cover_image_path = 'cover.jpg'
-        user_name = user_video_paths[chat_id].get('name')
-
-        if not video_path or not subtitle_path or not user_name:
-            await callback_query.message.reply("Video, subtitle file, or user name not found.")
-            return
-
-        await callback_query.message.reply("Adding soft subtitles, watermark, and cover image to the video...")
-        output_video_path = await add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_image_path, user_name)
-
-        if output_video_path:
-            uploading_text = await callback_query.message.reply("Uploading video with soft subtitles, watermark, and cover image...")
-            try:
-                await upload_document_with_progress(client, chat_id, output_video_path, uploading_text)
-                user_states[chat_id] = 'awaiting_video_link'
-            except Exception as e:
-                await callback_query.message.reply(f"Error uploading video: {str(e)}")
-        else:
-            await callback_query.message.reply("Failed to create video with soft subtitles, watermark, and cover image.")
-    except Exception as e:
-        await callback_query.message.reply(f"Error handling subtitles: {str(e)}")
 
 @app.on_callback_query(filters.regex("done"))
 async def handle_done(client, callback_query: CallbackQuery):
