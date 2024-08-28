@@ -1,24 +1,16 @@
-import time
-from moviepy.editor import VideoFileClip
-from PIL import Image
-# Start the timer
-start_time = time.time()
+import json
+import re
+from pyrogram import Client, filters 
+from pyrogram.types import Message 
 
-# Load the original video
-input_file = "input.mkv"
-output_file = "output_video_720p.mp4"
+with open('config.json') as config_file:
+    config = json.load(config_file)
 
-# Load the video file
-video = VideoFileClip(input_file)
+api_id = int(config['api_id'])
+api_hash = config['api_hash']
+bot_token = config['bot_token']
 
-# Resize the video to 720p
-video_resized = video.resize(height=720)
+app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# Write the result to a new file
-video_resized.write_videofile(output_file, codec="libx264", preset="ultrafast", bitrate="500k")
 
-# End the timer
-end_time = time.time()
-
-# Print the time taken
-print(f"Time taken: {end_time - start_time} seconds")
+app.run()
