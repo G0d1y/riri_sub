@@ -364,22 +364,10 @@ async def add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_i
         '-c:a', 'copy',
         '-c:s', 'mov_text',
         '-metadata:s:s:0', 'title=@RiRiMovies',
-        output_path_manually
+        output_path
     ]
 
     await run_ffmpeg_command(client, chat_id, ffmpeg_command, "Adding SoftSub...")
-    
-    # Construct the FFmpeg command
-    command = [
-        'ffmpeg', 
-        '-i', output_path_manually, 
-        '-map', '0', 
-        '-map', f'0:s:0', 
-        '-c', 'copy', 
-        '-disposition:s:0', 'default', 
-        output_path
-    ]
-    await run_ffmpeg_command(client, chat_id, command, "Setting default subtitle track...")
     
     return output_path
 
