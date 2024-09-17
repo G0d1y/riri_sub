@@ -4,7 +4,6 @@ import json
 from urllib.parse import urlparse, parse_qs, unquote
 from pyrogram import Client, filters
 from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton , ReplyKeyboardMarkup
-from moviepy.config import change_settings
 import subprocess
 import time
 import asyncio
@@ -12,7 +11,6 @@ from pyrogram.errors import FloodWait
 import sys
 import ffmpeg
 import re
-change_settings({"IMAGEMAGICK_BINARY": r"/ImageMagick-7.1.1-Q16-HDRI/magick.exe"})
 
 with open('config.json') as config_file:
     config = json.load(config_file)
@@ -84,7 +82,7 @@ def get_file_extension(url):
 
 async def download_video(client, url, file_name, chat_id , downloading_text):
     file_extension = get_file_extension(url)
-    video_path = f"downloaded_{file_name}{file_extension}"
+    video_path = f"downloaded_{file_name}.mkv"
     start_time = time.time()  
     last_update_time = start_time
     update_interval = 1  
@@ -121,31 +119,24 @@ async def download_video(client, url, file_name, chat_id , downloading_text):
 
 async def run_ffmpeg_command(client, chat_id, command, status_message):
     try:
-        # Send initial status message
         text = await client.send_message(chat_id, status_message)
         print("Running command:", " ".join(command))
 
-        # Run FFmpeg command and stream the output
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-        # Regex to extract progress information
         progress_re = re.compile(r'time=(\d{2}:\d{2}:\d{2}\.\d{2})\s+bitrate=\s*(\d+\.\d+)kbits/s\s+speed=\s*(\d+x)')
 
-        # Read stdout line by line
         while True:
             line = process.stdout.readline()
             if not line:
                 break
 
-            # Match and extract progress information
             match = progress_re.search(line)
             if match:
                 elapsed_time, bitrate, speed = match.groups()
                 progress_message = f"Processing: {elapsed_time} | Bitrate: {bitrate} kbits/s | Speed: {speed}"
-                # Update the message in Telegram
                 await client.edit_message_text(chat_id, text.id, progress_message)
 
-        # Wait for the process to finish
         process.wait()
         if process.returncode == 0:
             await client.edit_message_text(chat_id, text.id, f"{status_message} completed successfully.")
@@ -168,82 +159,48 @@ def get_video_properties(video_path):
     ]
     output = subprocess.check_output(cmd, text=True).splitlines()
     width, height = output[0], output[1]
-    frame_rate = eval(output[2])  # Converts frame rate from a string like "30000/1001" to a float
+    frame_rate = eval(output[2])
     return width, height, frame_rate
      
-async def add_watermark(client, chat_id, video_path, output_path, watermark_duration=20, audio_delay_correction=0.0):
+async def add_watermark(client, chat_id, video_path, output_path, watermark_duration=20):
     watermark_text = "بزرگترین کانال دانلود سریال کره ای\n@RiRiKdrama |  ریری کیدراما"
     font_path = 'Sahel-Bold.ttf'
     watermarked_segment_path = 'watermarked_segment.mkv'
     remaining_part_path = 'remaining_part.mkv'
-    reencoded_watermarked_path = 'watermarked_segment_reencoded.mkv'
     concat_file_path = 'concat_list.txt'
 
-    # Get video properties
-    width, height, frame_rate = get_video_properties(video_path)
-
-    # Step 1: Add Watermark
     watermark_cmd = [
-        'ffmpeg',
-        '-i', video_path,
-        '-vf', (
-            f"drawtext="
-            f"text='{watermark_text}':"
-            f"fontfile={font_path}:"
-            f"fontsize=15:"
-            f"fontcolor=white:"
-            f"bordercolor=black:"
-            f"borderw=2:"
-            f"x=20:"
-            f"y=60:"
-            f"line_spacing=10"
-        ),
-        '-t', str(watermark_duration),
-        '-copyts', '-start_at_zero',
-        '-c:v', 'libx264',
-        '-crf', '18',
-        '-preset', 'ultrafast',
-        '-c:a', 'copy',
-        '-vsync', '0',
-        '-y',
-        watermarked_segment_path
+    'ffmpeg',
+    '-i', video_path,
+    '-i', 'Watermark.png',
+    '-filter_complex', (
+        f"[1]scale=iw*1:-1[wm];[0][wm]overlay=x=10:y=10"
+    ),
+    '-t', str(watermark_duration),
+    '-c:v', 'libx264',
+    '-crf', '18',
+    '-preset', 'ultrafast',
+    '-c:a', 'copy',
+    '-y',
+    watermarked_segment_path 
     ]
-    await run_ffmpeg_command(client, chat_id, watermark_cmd, "Adding watermark...")
+    await run_ffmpeg_command(client, chat_id, watermark_cmd, "Adding watermark image")
 
-    # Step 2: Re-encode Watermarked Segment to Match the Main Video
-    reencode_cmd = [
-        'ffmpeg',
-        '-i', watermarked_segment_path,
-        '-filter_complex', (
-            f"pad={width}:{height}:-1:-1,fps={frame_rate}[v];"
-            f"aresample=async=1:min_hard_comp=0.1:first_pts=0[a]"
-        ),
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', 'libx264',
-        '-c:a', 'aac',
-        '-copyts', '-start_at_zero',
-        '-y',
-        reencoded_watermarked_path
-    ]
-    await run_ffmpeg_command(client, chat_id, reencode_cmd, "Re-encoding watermarked segment...")
-
-    # Step 3: Extract the Remaining Part of the Video
     extract_cmd = [
         'ffmpeg',
         '-i', video_path,
         '-ss', str(watermark_duration),
         '-c:v', 'copy',
         '-c:a', 'copy',
-        '-copyts', '-start_at_zero',
-        '-vsync', '0',
         '-y',
         remaining_part_path
     ]
-    await run_ffmpeg_command(client, chat_id, extract_cmd, "Extracting remaining part...")
+    await run_ffmpeg_command(client, chat_id, extract_cmd, "Extracting remaining part of the video...")
 
-    # Step 4: Concatenate the Segments Using concat Demuxer
+    print(watermarked_segment_path, remaining_part_path, output_path)
+    
     with open(concat_file_path, 'w') as f:
-        f.write(f"file '{reencoded_watermarked_path}'\n")
+        f.write(f"file '{watermarked_segment_path}'\n")
         f.write(f"file '{remaining_part_path}'\n")
 
     concat_cmd = [
@@ -251,22 +208,19 @@ async def add_watermark(client, chat_id, video_path, output_path, watermark_dura
         '-f', 'concat',
         '-safe', '0',
         '-i', concat_file_path,
-        '-c:v', 'copy',
-        '-c:a', 'copy',
-        '-vsync', '0',
+        '-c', 'copy',
         '-y',
         output_path
     ]
     await run_ffmpeg_command(client, chat_id, concat_cmd, "Finalizing video...")
 
-    # Step 5: Clean Up Temporary Files
-    for file_path in [watermarked_segment_path, remaining_part_path, reencoded_watermarked_path, concat_file_path]:
+    for file_path in [watermarked_segment_path, remaining_part_path, concat_file_path]:
         if os.path.exists(file_path):
             os.remove(file_path)
 
     await client.send_message(chat_id, "Watermarking complete.")
     return output_path
-    
+
 async def add_subtitles(client, chat_id, video_path, subtitles_path, output_path):
     ffmpeg_command = [
         'ffmpeg',
@@ -279,13 +233,11 @@ async def add_subtitles(client, chat_id, video_path, subtitles_path, output_path
         output_path
     ]
     
-    # Start FFmpeg command with progress updates
     await run_ffmpeg_command(client, chat_id, ffmpeg_command, "Adding HardSub...")
 
     return output_path
 
 def add_cover_as_first_frame(video_path, cover_image_path, output_path, cover_duration=0.01):
-    # Get video frame rate
     probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
                             'stream=r_frame_rate', '-of', 'default=noprint_wrappers=1', video_path],
                             stdout=subprocess.PIPE, text=True).stdout
@@ -293,7 +245,6 @@ def add_cover_as_first_frame(video_path, cover_image_path, output_path, cover_du
     num, denom = map(int, frame_rate_str.split('/'))
     frame_rate = num / denom
 
-    # Create cover video
     cover_video_path = 'cover_video.mp4'
     cover_cmd = [
         'ffmpeg',
@@ -315,7 +266,6 @@ def add_cover_as_first_frame(video_path, cover_image_path, output_path, cover_du
         print(f"Error creating cover video: {str(e)}")
         return None
 
-    # Concatenate cover video and main video
     concat_file_path = 'concat_list.txt'
     with open(concat_file_path, 'w') as f:
         f.write(f"file '{cover_video_path}'\n")
@@ -337,7 +287,6 @@ def add_cover_as_first_frame(video_path, cover_image_path, output_path, cover_du
         print(f"Error concatenating cover video and main video: {str(e)}")
         return None
 
-    # Clean up temporary files
     if os.path.exists(cover_video_path):
         os.remove(cover_video_path)
     if os.path.exists(concat_file_path):
@@ -373,48 +322,33 @@ async def add_soft_subtitles(client, chat_id, video_path, subtitle_path, cover_i
         print("Video or subtitles file does not exist.")
         return None
 
-    # Paths for intermediate and final files
-    watermarked_video_path = f"watermarked_{user_name}.mp4"
-    subtitle_movtext_path = f"{user_name}_subtitles.mp4"
-    output_path_manually = f"Subbed_{user_name}.mp4"
-    final_output_path = f"{user_name}.mp4"
+    watermarked_video_path = f"watermarked_{user_name}.mkv"
+    final_output_path = f"{user_name}.mkv"
 
-    # Add watermark to the video
     watermarked_video_path = await add_watermark(client, chat_id, video_path, watermarked_video_path)
     if not watermarked_video_path:
         print("Failed to add watermark.")
         return None
 
-    # Convert subtitles to MOV_TEXT format
-    ffmpeg_convert_subtitles_command = [
-        'ffmpeg',
-        '-i', subtitle_path,
-        '-c:s', 'mov_text',
-        subtitle_movtext_path
-    ]
-    try:
-        subprocess.run(ffmpeg_convert_subtitles_command, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error during subtitle conversion: {str(e)}")
-        return None
-
-    # Embed the converted subtitles into the watermarked video
     ffmpeg_command = [
         'ffmpeg',
         '-i', watermarked_video_path,
-        '-i', subtitle_movtext_path,
+        '-i', subtitle_path,
         '-map', '0:v',
         '-map', '0:a',
         '-map', '1:s',
         '-c:v', 'copy',
         '-c:a', 'copy',
-        '-c:s', 'mov_text',
+        '-c:s', 'srt',
         '-metadata:s:s:0', 'title=@RiRiMovies',
-        final_output_path
+        '-disposition:s:0', 'default',
+        f"{user_name}.mkv"
     ]
+
     await run_ffmpeg_command(client, chat_id, ffmpeg_command, "Adding SoftSub...")
 
     return final_output_path
+
 
 @app.on_message(filters.command("start"))
 async def send_welcome(client, message: Message):
@@ -510,8 +444,7 @@ async def handle_text_message(client, message: Message):
                     os.remove(file_path)
                 
         video_url = message.text
-        if video_url.startswith('http'):  # Assuming URL starts with 'http'
-            # Handle URL case
+        if video_url.startswith('http'):
             user_video_paths[chat_id] = {'url': video_url}
             await message.reply("لطفا نام مورد نظر را بفرستید.")
             user_states[chat_id] = 'awaiting_video_name'
@@ -543,7 +476,6 @@ async def handle_text_message(client, message: Message):
         user_states[chat_id] = 'awaiting_subtitle_file'
 
 def sanitize_filename(filename):
-    # Replace any invalid characters with an underscore
     return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', filename)
 
 @app.on_message(filters.document & filters.private)
@@ -567,7 +499,6 @@ async def handle_video_file(client, message: Message):
                 if os.path.isfile(file_path):
                     os.remove(file_path)
 
-        # Save the video file
         file_id = message.document.file_id
         file_name = message.document.file_name
         sanitized_file_name = sanitize_filename(file_name)
