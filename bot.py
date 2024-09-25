@@ -77,7 +77,7 @@ def add_soft_subtitle_with_watermark(video_file, subtitle_file, watermark_file, 
     subprocess.run([
         'ffmpeg', '-y', '-i', video_file, '-i', subtitle_file, '-i', watermark_file,
         '-filter_complex', '[0:v][2:v]overlay=W-w-10:H-h-10[subt];[subt]subtitles=' + subtitle_file, 
-        '-c:v', 'libx264', '-crf', '23', '-preset', 'fast', '-threads', '0', 
+        '-c:v', 'libx264', '-crf', '23', '-preset', 'ultrafast', '-threads', '0', 
         '-c:a', 'copy', output_file
     ])
 
