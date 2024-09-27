@@ -254,17 +254,26 @@ def start_processing(client, message):
 
 @app.on_message(filters.text)
 def collect_links(client, message):
+    # Split the message by lines
     tasks = message.text.splitlines()
-    
-    for task in tasks:
-        if task.strip():
-            video_link, subtitle_link, output_name = task.split(" | ")
-            video_tasks.append((video_link.strip(), subtitle_link.strip(), output_name.strip()))
-    
+
+    for i in range(0, len(tasks), 3):
+        if i + 2 < len(tasks):
+            video_link = tasks[i].strip()
+            subtitle_link = tasks[i + 1].strip()
+            output_name = tasks[i + 2].strip()
+
+            if video_link and subtitle_link and output_name:
+                video_tasks.append((video_link, subtitle_link, output_name))
+
     if video_tasks:
         client.send_message(message.chat.id, "لینک‌ها دریافت شد. در حال پردازش...")
+
         for video_link, subtitle_link, output_name in video_tasks:
-            threading.Thread(target=process_video_with_links, args=(video_link, subtitle_link, client, message.chat.id, output_name)).start()
+            threading.Thread(
+                target=process_video_with_links,
+                args=(video_link, subtitle_link, client, message.chat.id, output_name)
+            ).start()
 
         video_tasks.clear()
 
