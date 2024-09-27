@@ -74,7 +74,7 @@ def add_watermark(video_path, output_path, watermark_duration=20):
     '-t', str(watermark_duration),
     '-c:v', 'libx264',
     '-crf', '23',
-    '-preset', 'veryslow',
+    '-preset', 'slow',
     '-c:a', 'copy',
     '-y',
     watermarked_segment_path 
